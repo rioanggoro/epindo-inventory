@@ -9,13 +9,13 @@ return new class extends Migration
     /**
      * Run the migrations.
      */
-    public function up(): void
+     public function up(): void
     {
-        Schema::create('incomings', function (Blueprint $table) {
+        Schema::create('stocks', function (Blueprint $table) {
             $table->id();
-            $table->string('item_name'); 
-            $table->integer('quantity'); 
-            $table->date('incoming_date'); 
+            $table->string('item_name')->unique(); 
+            $table->enum('type', ['raw_material', 'finished_product']); 
+            $table->integer('current_stock')->default(0); 
             $table->timestamps();
         });
     }
@@ -25,6 +25,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('incomings');
+        Schema::dropIfExists('stocks');
     }
 };
