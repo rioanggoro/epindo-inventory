@@ -6,7 +6,7 @@ use App\Http\Controllers\InvoiceController;
 use App\Http\Controllers\StockController;
 
 Route::get('/', function () {
-    return view('welcome');
+    return redirect()->route('incomings.index');
 });
 
 Route::resource('incomings', IncomingController::class);
