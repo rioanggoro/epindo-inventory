@@ -39,9 +39,8 @@ class InvoiceController extends Controller
      */
     public function store(Request $request)
     {
-        // 1. Validasi data yang masuk dari form
         $request->validate([
-            'invoice_number' => 'required|string|max:255|unique:invoices,invoice_number', 
+            'invoice_number' => 'required|string|max:255|unique:invoices,invoice_number',
             'customer_name' => 'required|string|max:255',
             'product_sold_name' => 'required|string|max:255|exists:stocks,item_name,type,finished_product',
             'quantity_sold' => 'required|integer|min:1',
@@ -49,26 +48,32 @@ class InvoiceController extends Controller
             'invoice_date' => 'required|date',
         ]);
 
-        DB::transaction(function () use ($request) {
-            // 2. ✅ Validasi Stok Produk Jadi
-            $productStock = Stock::where('item_name', $request->product_sold_name)
-                                  ->where('type', 'finished_product')
-                                  ->first();
+        try { // ✅ Mulai blok try
+            DB::transaction(function () use ($request) {
+                $productStock = Stock::where('item_name', $request->product_sold_name)
+                                      ->where('type', 'finished_product')
+                                      ->first();
 
-            if (!$productStock || $productStock->current_stock < $request->quantity_sold) {
-                throw new \Exception('Stok produk jadi (' . $request->product_sold_name . ') tidak cukup untuk penjualan ini.');
-            }
+                if (!$productStock || $productStock->current_stock < $request->quantity_sold) {
+                    throw new \Exception('Stok produk jadi (' . $request->product_sold_name . ') tidak cukup untuk penjualan ini.'); // Ini yang melempar exception
+                }
 
+                Invoice::create($request->all());
 
-            Invoice::create($request->all());
+                $productStock->current_stock -= $request->quantity_sold;
+                $productStock->save();
+            });
 
-            $productStock->current_stock -= $request->quantity_sold;
-            $productStock->save();
-        });
+            return redirect()->route('invoices.index')
+                             ->with('success', 'Invoice berhasil dibuat, stok produk jadi berkurang! ✅');
 
-        return redirect()->route('invoices.index')
-                         ->with('success', 'Invoice berhasil dibuat, stok produk jadi berkurang! ✅');
+        } catch (\Exception $e) { // ✅ Tangkap exception di sini
+            return redirect()->back()
+                             ->withInput()
+                             ->with('error', $e->getMessage()); // Kirim pesan exception ke sesi
+        }
     }
+
 
     /**
      * Display the specified resource.
@@ -95,9 +100,7 @@ class InvoiceController extends Controller
      */
     public function update(Request $request, Invoice $invoice)
     {
-        // 1. Validasi data yang masuk dari form
         $request->validate([
-          
             'invoice_number' => ['required', 'string', 'max:255', Rule::unique('invoices')->ignore($invoice->id)],
             'customer_name' => 'required|string|max:255',
             'product_sold_name' => 'required|string|max:255|exists:stocks,item_name,type,finished_product',
@@ -106,39 +109,41 @@ class InvoiceController extends Controller
             'invoice_date' => 'required|date',
         ]);
 
-        // Simpan nilai lama untuk perhitungan stok
         $oldQuantitySold = $invoice->quantity_sold;
         $oldProductSoldName = $invoice->product_sold_name;
 
-        DB::transaction(function () use ($request, $invoice, $oldQuantitySold, $oldProductSoldName) {
-            // 2. Kembalikan stok produk jadi sebelumnya
-            $oldProductStock = Stock::where('item_name', $oldProductSoldName)
-                                     ->where('type', 'finished_product')
-                                     ->first();
-            if ($oldProductStock) {
-                $oldProductStock->current_stock += $oldQuantitySold;
-                $oldProductStock->save();
-            }
+        try { 
+            DB::transaction(function () use ($request, $invoice, $oldQuantitySold, $oldProductSoldName) {
+                $oldProductStock = Stock::where('item_name', $oldProductSoldName)
+                                         ->where('type', 'finished_product')
+                                         ->first();
+                if ($oldProductStock) {
+                    $oldProductStock->current_stock += $oldQuantitySold;
+                    $oldProductStock->save();
+                }
 
-            // 3. ✅ Validasi Stok Produk Jadi untuk nilai baru
-            $newProductStock = Stock::where('item_name', $request->product_sold_name)
-                                     ->where('type', 'finished_product')
-                                     ->first();
+                $newProductStock = Stock::where('item_name', $request->product_sold_name)
+                                         ->where('type', 'finished_product')
+                                         ->first();
 
-            if (!$newProductStock || $newProductStock->current_stock < $request->quantity_sold) {
-                throw new \Exception('Stok produk jadi (' . $request->product_sold_name . ') tidak cukup untuk perubahan penjualan ini.');
-            }
+                if (!$newProductStock || $newProductStock->current_stock < $request->quantity_sold) {
+                    throw new \Exception('Stok produk jadi (' . $request->product_sold_name . ') tidak cukup untuk perubahan penjualan ini.'); 
+                }
 
-            // 4. Update data invoice
-            $invoice->update($request->all());
+                $invoice->update($request->all());
 
-            // 5. ✅ Update Stok Produk Jadi (kurangi dengan nilai baru)
-            $newProductStock->current_stock -= $request->quantity_sold;
-            $newProductStock->save();
-        });
+                $newProductStock->current_stock -= $request->quantity_sold;
+                $newProductStock->save();
+            });
 
-        return redirect()->route('invoices.index')
-                         ->with('success', 'Invoice berhasil diperbarui dan stok disesuaikan! ✅');
+            return redirect()->route('invoices.index')
+                             ->with('success', 'Invoice berhasil diperbarui dan stok disesuaikan! ✅');
+
+        } catch (\Exception $e) {
+            return redirect()->back()
+                             ->withInput()
+                             ->with('error', $e->getMessage());
+        }
     }
 
     /**

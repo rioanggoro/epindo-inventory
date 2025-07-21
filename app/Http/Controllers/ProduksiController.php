@@ -6,6 +6,7 @@ use App\Models\Produksi;
 use App\Models\Stock;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB; 
+use Illuminate\Validation\Rule;
 
 class ProduksiController extends Controller
 {
@@ -25,8 +26,10 @@ class ProduksiController extends Controller
      */
     public function create()
     {
-        // Ambil daftar bahan baku yang ada di stok untuk dropdown
-        $rawMaterials = Stock::where('type', 'raw_material')->get();
+       
+        $rawMaterials = Stock::where('type', 'raw_material')
+                              ->where('current_stock', '>', 0)
+                              ->get();
         return view('produksis.create', compact('rawMaterials'));
     }
 
@@ -36,54 +39,54 @@ class ProduksiController extends Controller
      */
     public function store(Request $request)
     {
-        // 1. Validasi data yang masuk dari form
         $request->validate([
             'product_name' => 'required|string|max:255',
             'quantity_produced' => 'required|integer|min:1',
             'raw_material_used' => 'required|integer|min:1',
             'production_date' => 'required|date',
-            // Memastikan nama bahan baku ada di tabel stok dan tipenya raw_material
             'raw_material_item_name' => 'required|string|max:255|exists:stocks,item_name,type,raw_material'
         ]);
 
-        // Menggunakan transaksi database untuk memastikan kedua operasi berhasil atau gagal bersamaan
-        DB::transaction(function () use ($request) {
-            // 2. Validasi Stok Bahan Baku
-            $rawMaterialStock = Stock::where('item_name', $request->raw_material_item_name)
-                                      ->where('type', 'raw_material')
-                                      ->first();
+        try { 
+            DB::transaction(function () use ($request) {
+                $rawMaterialStock = Stock::where('item_name', $request->raw_material_item_name)
+                                          ->where('type', 'raw_material')
+                                          ->first();
 
-            // Jika stok tidak ditemukan atau tidak cukup, lempar exception
-            if (!$rawMaterialStock || $rawMaterialStock->current_stock < $request->raw_material_used) {
-                throw new \Exception('Stok bahan baku (' . $request->raw_material_item_name . ') tidak cukup untuk produksi ini.');
-            }
+                // Validasi stok bahan baku (ini yang melempar exception)
+                if (!$rawMaterialStock || $rawMaterialStock->current_stock < $request->raw_material_used) {
+                    throw new \Exception('Stok bahan baku (' . $request->raw_material_item_name . ') tidak cukup untuk produksi ini.');
+                }
 
-            // 3. Simpan data ke tabel 'produksis'
-            Produksi::create([
-                'product_name' => $request->product_name,
-                'quantity_produced' => $request->quantity_produced,
-                'raw_material_used' => $request->raw_material_used,
-                'production_date' => $request->production_date,
-                'raw_material_item_name' => $request->raw_material_item_name, // ✅ Pastikan ini ada dan benar
-            ]);
+                Produksi::create([
+                    'product_name' => $request->product_name,
+                    'quantity_produced' => $request->quantity_produced,
+                    'raw_material_used' => $request->raw_material_used,
+                    'production_date' => $request->production_date,
+                    'raw_material_item_name' => $request->raw_material_item_name,
+                ]);
 
-            // 4. Update Stok Bahan Baku (kurangi)
-            $rawMaterialStock->current_stock -= $request->raw_material_used;
-            $rawMaterialStock->save();
+                $rawMaterialStock->current_stock -= $request->raw_material_used;
+                $rawMaterialStock->save();
 
-            // 5. Update Stok Produk Jadi (tambah)
-            // Cari atau buat record stok produk jadi
-            $finishedProductStock = Stock::firstOrNew([
-                'item_name' => $request->product_name,
-                'type' => 'finished_product'
-            ]);
-            $finishedProductStock->current_stock += $request->quantity_produced;
-            $finishedProductStock->save();
-        });
+                $finishedProductStock = Stock::firstOrNew([
+                    'item_name' => $request->product_name,
+                    'type' => 'finished_product'
+                ]);
+                $finishedProductStock->current_stock += $request->quantity_produced;
+                $finishedProductStock->save();
+            });
 
-        return redirect()->route('produksis.index')
-                         ->with('success', 'Produksi berhasil ditambahkan, stok bahan baku berkurang, dan stok produk jadi bertambah! ✅');
+            return redirect()->route('produksis.index')
+                             ->with('success', 'Produksi berhasil ditambahkan, stok bahan baku berkurang, dan stok produk jadi bertambah! ✅');
+
+        } catch (\Exception $e) { 
+            return redirect()->back()
+                             ->withInput() 
+                             ->with('error', $e->getMessage()); 
+        }
     }
+
 
     /**
      * Display the specified resource.
@@ -98,9 +101,12 @@ class ProduksiController extends Controller
      * Show the form for editing the specified resource.
      * Menampilkan form untuk mengedit record produksi yang sudah ada.
      */
-    public function edit(Produksi $produksi)
+     public function edit(Produksi $produksi)
     {
-        $rawMaterials = Stock::where('type', 'raw_material')->get();
+        $rawMaterials = Stock::where('type', 'raw_material')
+                              ->where('current_stock', '>', 0)
+                              ->orWhere('item_name', $produksi->raw_material_item_name) 
+                              ->get();
         return view('produksis.edit', compact('produksi', 'rawMaterials'));
     }
 
@@ -110,7 +116,6 @@ class ProduksiController extends Controller
      */
     public function update(Request $request, Produksi $produksi)
     {
-        // 1. Validasi data yang masuk dari form
         $request->validate([
             'product_name' => 'required|string|max:255',
             'quantity_produced' => 'required|integer|min:1',
@@ -119,68 +124,69 @@ class ProduksiController extends Controller
             'raw_material_item_name' => 'required|string|max:255|exists:stocks,item_name,type,raw_material'
         ]);
 
-        // Simpan nilai lama untuk perhitungan stok
         $oldQuantityProduced = $produksi->quantity_produced;
         $oldRawMaterialUsed = $produksi->raw_material_used;
         $oldProductName = $produksi->product_name;
-        $oldRawMaterialItemName = $produksi->raw_material_item_name; // ✅ Ambil dari model produksi
+        $oldRawMaterialItemName = $produksi->raw_material_item_name;
 
-        DB::transaction(function () use ($request, $produksi, $oldQuantityProduced, $oldRawMaterialUsed, $oldProductName, $oldRawMaterialItemName) {
-            // 2. Kembalikan stok lama sebelum diupdate
-            // Tambahkan kembali bahan baku yang sebelumnya digunakan (jika nama bahan baku tidak berubah)
-            // Atau jika nama bahan baku berubah, sesuaikan stok lama dengan nama bahan baku lama
-            $rawMaterialStockBeforeUpdate = Stock::where('item_name', $oldRawMaterialItemName)
-                                                  ->where('type', 'raw_material')
-                                                  ->first();
-            if ($rawMaterialStockBeforeUpdate) {
-                $rawMaterialStockBeforeUpdate->current_stock += $oldRawMaterialUsed;
-                $rawMaterialStockBeforeUpdate->save();
-            }
-
-            $finishedProductStockBeforeUpdate = Stock::where('item_name', $oldProductName)
-                                                    ->where('type', 'finished_product')
-                                                    ->first();
-            if ($finishedProductStockBeforeUpdate) {
-                $finishedProductStockBeforeUpdate->current_stock -= $oldQuantityProduced;
-                if ($finishedProductStockBeforeUpdate->current_stock < 0) {
-                    $finishedProductStockBeforeUpdate->current_stock = 0;
+        try { 
+            DB::transaction(function () use ($request, $produksi, $oldQuantityProduced, $oldRawMaterialUsed, $oldProductName, $oldRawMaterialItemName) {
+                // Kembalikan stok lama sebelum diupdate
+                $rawMaterialStockBeforeUpdate = Stock::where('item_name', $oldRawMaterialItemName)
+                                                      ->where('type', 'raw_material')
+                                                      ->first();
+                if ($rawMaterialStockBeforeUpdate) {
+                    $rawMaterialStockBeforeUpdate->current_stock += $oldRawMaterialUsed;
+                    $rawMaterialStockBeforeUpdate->save();
                 }
-                $finishedProductStockBeforeUpdate->save();
-            }
 
-            $newRawMaterialStock = Stock::where('item_name', $request->raw_material_item_name)
-                                         ->where('type', 'raw_material')
-                                         ->first();
+                $finishedProductStockBeforeUpdate = Stock::where('item_name', $oldProductName)
+                                                        ->where('type', 'finished_product')
+                                                        ->first();
+                if ($finishedProductStockBeforeUpdate) {
+                    $finishedProductStockBeforeUpdate->current_stock -= $oldQuantityProduced;
+                    if ($finishedProductStockBeforeUpdate->current_stock < 0) {
+                        $finishedProductStockBeforeUpdate->current_stock = 0;
+                    }
+                    $finishedProductStockBeforeUpdate->save();
+                }
 
-            // Jika stok tidak ditemukan atau tidak cukup, batalkan transaksi
-            if (!$newRawMaterialStock || $newRawMaterialStock->current_stock < $request->raw_material_used) {
-                throw new \Exception('Stok bahan baku (' . $request->raw_material_item_name . ') tidak cukup untuk perubahan produksi ini.');
-            }
+               
+                $newRawMaterialStock = Stock::where('item_name', $request->raw_material_item_name)
+                                             ->where('type', 'raw_material')
+                                             ->first();
 
-            // 4. Update data produksi di tabel 'produksis'
-            $produksi->update([
-                'product_name' => $request->product_name,
-                'quantity_produced' => $request->quantity_produced,
-                'raw_material_used' => $request->raw_material_used,
-                'production_date' => $request->production_date,
-                'raw_material_item_name' => $request->raw_material_item_name,
-            ]);
+                if (!$newRawMaterialStock || $newRawMaterialStock->current_stock < $request->raw_material_used) {
+                    throw new \Exception('Stok bahan baku (' . $request->raw_material_item_name . ') tidak cukup untuk perubahan produksi ini.');
+                }
 
-            // 5. Update Stok Bahan Baku (kurangi dengan nilai baru)
-            $newRawMaterialStock->current_stock -= $request->raw_material_used;
-            $newRawMaterialStock->save();
+                $produksi->update([
+                    'product_name' => $request->product_name,
+                    'quantity_produced' => $request->quantity_produced,
+                    'raw_material_used' => $request->raw_material_used,
+                    'production_date' => $request->production_date,
+                    'raw_material_item_name' => $request->raw_material_item_name,
+                ]);
 
-            // 6. Update Stok Produk Jadi (tambah dengan nilai baru)
-            $newFinishedProductStock = Stock::firstOrNew([
-                'item_name' => $request->product_name,
-                'type' => 'finished_product'
-            ]);
-            $newFinishedProductStock->current_stock += $request->quantity_produced;
-            $newFinishedProductStock->save();
-        });
+                $newRawMaterialStock->current_stock -= $request->raw_material_used;
+                $newRawMaterialStock->save();
 
-        return redirect()->route('produksis.index')
-                         ->with('success', 'Produksi berhasil diperbarui dan stok disesuaikan! ✅');
+                $newFinishedProductStock = Stock::firstOrNew([
+                    'item_name' => $request->product_name,
+                    'type' => 'finished_product'
+                ]);
+                $newFinishedProductStock->current_stock += $request->quantity_produced;
+                $newFinishedProductStock->save();
+            });
+
+            return redirect()->route('produksis.index')
+                             ->with('success', 'Produksi berhasil diperbarui dan stok disesuaikan! ✅');
+
+        } catch (\Exception $e) { // ✅ Tangkap exception di sini
+            return redirect()->back()
+                             ->withInput()
+                             ->with('error', $e->getMessage());
+        }
     }
 
     /**

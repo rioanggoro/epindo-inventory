@@ -4,6 +4,7 @@
     <div class="bg-white p-6 rounded-lg shadow-md">
         <h1 class="text-3xl font-bold mb-6 text-gray-800">Edit Produksi</h1>
 
+        {{-- Menampilkan error validasi dari Laravel --}}
         @if ($errors->any())
             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
                 <strong class="font-bold">Oops!</strong>
@@ -15,6 +16,7 @@
                 </ul>
             </div>
         @endif
+        {{-- Menampilkan error kustom dari controller (misalnya stok tidak cukup) --}}
         @if (session('error'))
             <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
                 <span class="block sm:inline">{{ session('error') }}</span>
@@ -23,7 +25,7 @@
 
         <form action="{{ route('produksis.update', $produksi->id) }}" method="POST">
             @csrf
-            @method('PUT')
+            @method('PUT') {{-- Penting untuk HTTP PUT request --}}
 
             <div class="mb-4">
                 <label for="product_name" class="block text-gray-700 text-sm font-bold mb-2">Nama Produk Jadi:</label>
@@ -46,8 +48,8 @@
                     required>
                     <option value="">Pilih Bahan Baku</option>
                     @foreach ($rawMaterials as $material)
-                        <option value="{{ $material->item_name }}"
-                            {{ old('raw_material_item_name', $produksi->raw_material_item_name ?? '') == $material->item_name ? 'selected' : '' }}>
+                        <option value="{{ $material->item_name }}" {{-- ✅ Pastikan nilai yang dipilih adalah dari data produksi yang sedang diedit --}}
+                            {{ old('raw_material_item_name', $produksi->raw_material_item_name) == $material->item_name ? 'selected' : '' }}>
                             {{ $material->item_name }} (Stok: {{ $material->current_stock }})
                         </option>
                     @endforeach

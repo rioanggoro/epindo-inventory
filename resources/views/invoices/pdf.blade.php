@@ -86,8 +86,8 @@
 <body>
     <div class="header">
         <h1>INVOICE</h1>
-        <p>PT. ELEKTROPLATING SUPERINDO [cite: 4]</p>
-        <p>Jl. Karet III Blok H No.24, Delta Silicon II Lippo Cikarang [cite: 5]</p>
+        <p>PT. ELEKTROPLATING SUPERINDO</p>
+        <p>Jl. Karet III Blok H No.24, Delta Silicon II Lippo Cikarang </p>
         <p>Telp. 021 8990 0915, 8990 0916, Fax. 021 897 2040 </p>
         <p>e-mail: hrd@epindo.co.id </p>
     </div>
